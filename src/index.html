@@ -283,8 +283,9 @@
   input[type=range]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px var(--accent-soft); }
 
   #seekwrap { margin-top: 14px; }
+  #fileidx { flex: 0 0 auto; opacity: 0.75; }
   .times {
-    display: flex; justify-content: space-between;
+    display: flex; justify-content: space-between; gap: 8px;
     color: var(--muted); font-size: 12px;
     font-variant-numeric: tabular-nums; /* no width jitter as digits tick */
     margin-top: 2px;
@@ -521,6 +522,8 @@
       <input type="range" id="seek" min="0" max="100" step="0.1" value="0" aria-label="Seek">
       <div class="times">
         <span id="pos">0:00</span>
+        <!-- position in the folder: explains why prev/next grey out -->
+        <span id="fileidx"></span>
         <span id="dur">0:00</span>
       </div>
     </div>
@@ -1186,8 +1189,15 @@ async function syncSiblings() {
 
 function updateSkip() {
   const i = siblings.list.indexOf(state["path"] ?? "");
+  const n = siblings.list.length;
   set($("prev"), "disabled", !(i > 0));
-  set($("next"), "disabled", !(i >= 0 && i < siblings.list.length - 1));
+  set($("next"), "disabled", !(i >= 0 && i < n - 1));
+  // A greyed button with no explanation reads as broken. Showing "1 / 1" makes
+  // it obvious the folder simply has nothing to skip to.
+  set($("fileidx"), "text", i >= 0 ? `${i + 1} / ${n}` : "");
+  const why = n === 1 ? "Only file in this folder" : null;
+  set($("prev"), "title", why ?? (i > 0 ? "Previous file" : "First file in folder"));
+  set($("next"), "title", why ?? (i >= 0 && i < n - 1 ? "Next file" : "Last file in folder"));
 }
 
 function skip(step) {
