@@ -403,6 +403,47 @@ mod tests {
         }
     }
 
+    /// An icon `<symbol id="x">` sharing an id with a control means
+    /// getElementById returns the symbol — the sprite is declared first — so
+    /// every handler and state update silently lands on the wrong element and
+    /// the real button stays dead. This shipped for `prev`/`next`/`stop`/`mute`.
+    #[test]
+    fn no_duplicate_element_ids_in_ui() {
+        let mut ids: Vec<&str> = Vec::new();
+        let mut rest = INDEX_HTML;
+        while let Some(i) = rest.find(" id=\"") {
+            rest = &rest[i + 5..];
+            if let Some(end) = rest.find('"') {
+                ids.push(&rest[..end]);
+                rest = &rest[end..];
+            }
+        }
+        assert!(ids.len() > 40, "id scan found suspiciously few ids: {}", ids.len());
+        let mut seen = std::collections::HashSet::new();
+        let dupes: Vec<&&str> = ids.iter().filter(|id| !seen.insert(**id)).collect();
+        assert!(dupes.is_empty(), "duplicate ids in index.html: {dupes:?}");
+    }
+
+    #[test]
+    fn every_icon_reference_resolves_to_a_symbol() {
+        let symbols: std::collections::HashSet<&str> = INDEX_HTML
+            .match_indices("<symbol id=\"")
+            .map(|(i, m)| {
+                let s = &INDEX_HTML[i + m.len()..];
+                &s[..s.find('"').unwrap()]
+            })
+            .collect();
+        let mut missing = Vec::new();
+        for (i, m) in INDEX_HTML.match_indices("href=\"#") {
+            let s = &INDEX_HTML[i + m.len()..];
+            let name = &s[..s.find('"').unwrap()];
+            if !symbols.contains(name) {
+                missing.push(name);
+            }
+        }
+        assert!(missing.is_empty(), "<use> points at missing symbols: {missing:?}");
+    }
+
     #[test]
     fn browse_root_confinement() {
         let root = std::fs::canonicalize("/usr").unwrap();
