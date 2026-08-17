@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, Request, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -143,6 +143,7 @@ async fn main() -> std::process::ExitCode {
         .route("/api/browse", get(api_browse))
         .route("/api/info", get(api_info))
         .with_state(app)
+        .layer(middleware::from_fn(no_cache))
         .layer(middleware::from_fn(guard_host));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
@@ -169,6 +170,19 @@ async fn main() -> std::process::ExitCode {
     axum::serve(listener, router).await.unwrap();
     let _ = std::fs::remove_file(state_file());
     std::process::ExitCode::SUCCESS
+}
+
+/// Nothing here is ever safe to cache. The whole UI is compiled into the
+/// binary and changes with every build, and the API is live device state. With
+/// no cache headers at all a browser applies heuristic freshness and can pin a
+/// phone to an old page indefinitely, which looks exactly like a broken build.
+async fn no_cache(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+    );
+    res
 }
 
 /// Block DNS-rebinding: a malicious site pointing its own hostname at this
