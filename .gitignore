@@ -5,6 +5,7 @@
 # the PKGBUILD lives in packaging/ rather than the repo root
 /packaging/src/
 /packaging/pkg/
+/packaging/mpvremote/
 /packaging/*.pkg.tar.*
 /packaging/*.src.tar.*
 /packaging/*.log

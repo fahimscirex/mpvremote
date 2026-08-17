@@ -2,7 +2,7 @@
 
 pkgname=mpvremote-git
 _pkgname=mpvremote
-pkgver=r1.0000000
+pkgver=r3.7a91db8
 pkgrel=1
 pkgdesc="Web remote control for mpv - single binary that serves its own UI"
 arch=('x86_64' 'aarch64')
