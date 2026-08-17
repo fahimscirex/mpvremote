@@ -1,0 +1,20 @@
+# Rust build output
+/target/
+
+# makepkg build output — it uses src/ and pkg/ as scratch dirs, which is why
+# the PKGBUILD lives in packaging/ rather than the repo root
+/packaging/src/
+/packaging/pkg/
+/packaging/*.pkg.tar.*
+/packaging/*.src.tar.*
+/packaging/*.log
+
+# editor and agent tooling
+/.claude/
+/.vscode/
+/.idea/
+*.swp
+*~
+
+# personal working notes
+/TODO.md

@@ -1,0 +1,15 @@
+[package]
+name = "mpvremote"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "sync", "time", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+qrcode = { version = "0.14.1", default-features = false }
+
+[profile.release]
+strip = true
+lto = true

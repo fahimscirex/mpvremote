@@ -1,0 +1,1351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060f">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polygon points='7 4 20 12 7 20' fill='%2300e5ff'/></svg>">
+<title>mpv remote</title>
+<script>
+  // Restore the theme before first paint so there is no flash of the default.
+  try {
+    var t = localStorage.getItem("mpvremote-theme");
+    if (t) document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+<style>
+  /* ---------- palette ----------
+     Cyberpunk is the default so it paints before the theme script runs;
+     the rest are opt-in via data-theme on <html>. Order matters: these all
+     have the same specificity as :root, so the overrides must come after. */
+  :root, [data-theme=cyberpunk] {
+    --bg: #05060f;
+    --surface: #0b1020;
+    --surface-2: #141c33;
+    --surface-3: #1f2c4d;
+    --fg: #e6f7ff;
+    --muted: #6f88ad;
+    --border: #1a2440;
+    --accent: #00e5ff;
+    --accent-fg: #04121a;
+    --accent-hi: #5cf0ff;
+    --accent-soft: rgb(0 229 255 / 0.4);
+    --fill: #00e5ff;
+    --dir: #ff2e88;
+    --placeholder: #6079a3;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  [data-theme=slate] {
+    --bg: #020617;
+    --surface: #0f172a;
+    --surface-2: #1e293b;
+    --surface-3: #293548;
+    --fg: #f8fafc;
+    --muted: #94a3b8;
+    --border: #1e293b;
+    --accent: #ef4444;
+    --accent-fg: #ffffff;
+    --accent-hi: #f05252;
+    --accent-soft: rgb(239 68 68 / 0.4);
+    --fill: var(--fg);
+    --dir: #60a5fa;
+    --placeholder: #64748b;
+  }
+
+  [data-theme=synthwave] {
+    --bg: #120720;
+    --surface: #1c0d2e;
+    --surface-2: #2a1546;
+    --surface-3: #3d2065;
+    --fg: #ffe9f7;
+    --muted: #a184c2;
+    --border: #341f59;
+    --accent: #ff2d95;
+    --accent-fg: #ffffff;
+    --accent-hi: #ff5cae;
+    --accent-soft: rgb(255 45 149 / 0.4);
+    --fill: #ff2d95;
+    --dir: #ffb800;
+    --placeholder: #9074b6;
+  }
+
+  [data-theme=crt] {
+    --bg: #0a0a06;
+    --surface: #13120a;
+    --surface-2: #1e1c10;
+    --surface-3: #2e2b18;
+    --fg: #ffc966;
+    --muted: #b08f3d;
+    --border: #2b2816;
+    --accent: #ffb000;
+    --accent-fg: #140f00;
+    --accent-hi: #ffc633;
+    --accent-soft: rgb(255 176 0 / 0.4);
+    --fill: #ffb000;
+    --dir: #ffdf9e;
+    --placeholder: #94773a;
+    --font: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  }
+
+  :root {
+    /* Emil: built-in easings are too weak. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --press: 160ms;
+
+    --r-sm: 8px;
+    --r-md: 12px;
+    --r-lg: 16px;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    transition: background-color 240ms ease;
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.5;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+    padding-top: calc(16px + env(safe-area-inset-top));
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  svg { display: block; flex-shrink: 0; }
+  #sprite { display: none; }
+
+  /* ---------- connection banner ---------- */
+  #connbar {
+    display: flex; align-items: center; gap: 8px; justify-content: center;
+    background: var(--accent); color: var(--accent-fg);
+    padding: 10px 12px; border-radius: var(--r-md); margin-bottom: 12px;
+    font-size: 14px; font-weight: 500;
+    /* Emil: exits are faster than entrances. */
+    transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-out);
+  }
+  body:not(.disconnected) #connbar { display: none; }
+  @starting-style { #connbar { opacity: 0; transform: translateY(-8px); } }
+
+  body.disconnected main { opacity: 0.45; pointer-events: none; }
+  main { transition: opacity 220ms var(--ease-out); }
+
+  /* ---------- cards ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 16px;
+    margin-bottom: 12px;
+    /* Only ever fires on a theme swap; these colours are otherwise static. */
+    transition: background-color 240ms ease, border-color 240ms ease;
+  }
+
+  /* ---------- theme switcher ---------- */
+  .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .themes button { justify-content: flex-start; gap: 10px; }
+  .themes button[aria-pressed=true] { border-color: var(--accent); }
+  .sw {
+    width: 16px; height: 16px; border-radius: 50%;
+    flex-shrink: 0; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.15);
+  }
+  [data-t=cyberpunk] .sw { background: #00e5ff; }
+  [data-t=synthwave] .sw { background: #ff2d95; }
+  [data-t=crt]       .sw { background: #ffb000; }
+  [data-t=slate]     .sw { background: #ef4444; }
+
+  /* ---------- server address footer ---------- */
+  #serverbar {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 4px; padding: 8px;
+    color: var(--muted); font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    /* selectable so the address can be copied; clipboard API needs a secure
+       context, which plain http on a LAN IP is not */
+    user-select: text; -webkit-user-select: text;
+  }
+  #serverbar .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--fill); flex-shrink: 0;
+    transition: background-color 200ms ease;
+  }
+  body.disconnected #serverbar .dot { background: var(--accent); }
+
+  /* ---------- tabs (interior.dev/docs/tabs) ---------- */
+  .tabs { padding: 0; overflow: hidden; }
+  .tablist {
+    position: relative; display: flex; gap: 4px;
+    padding: 6px 6px 0;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+  }
+  /* One element carried between tabs, never two bars crossfading past each
+     other. Left/width rather than transform: it is out of flow, so this
+     invalidates only its own box, and scaleX would squash the corner radius. */
+  .tab-ind {
+    position: absolute; left: 0; top: 6px; bottom: -1px; width: 0;
+    background: var(--surface); opacity: 0;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+  }
+  .tablist button {
+    position: relative; z-index: 1;
+    flex: 1; min-width: 0; min-height: 44px; padding: 0 8px;
+    background: transparent; border: none;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    color: var(--muted); font-size: 13px; font-weight: 400; gap: 8px;
+    transition: color 150ms ease, background-color 150ms ease;
+  }
+  /* The plateau does not scale, so the label must not either. */
+  .tablist button:active { transform: none; }
+  .tablist button[aria-selected=true] { color: var(--fg); }
+  .tablist button:focus-visible {
+    outline: none; box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tablist button:not([aria-selected=true]):hover {
+      color: var(--fg); background: rgb(255 255 255 / 0.05);
+    }
+  }
+  /* An invisible copy at the selected weight holds the cell width, so the row
+     never reflows on selection and the indicator never lands on stale sizes. */
+  .tab-label { display: grid; place-items: center; min-width: 0; }
+  .tab-label > * { grid-area: 1 / 1; white-space: nowrap; }
+  .tab-sizer { visibility: hidden; font-weight: 600; }
+  .tablist button[aria-selected=true] .tab-text { font-weight: 600; }
+
+  .tabpanel {
+    padding: 16px; outline: none;
+    animation: panelIn 240ms var(--ease-out) both;
+  }
+  .tabpanel:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  @keyframes panelIn {
+    from { opacity: 0; transform: translateX(var(--dir, 10px)); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* ---------- now playing / title marquee ---------- */
+  /* interior.dev/docs/logo-marquee, adapted to one line of text */
+  #title {
+    position: relative; isolation: isolate;
+    font-size: 17px; font-weight: 600; line-height: 1.4;
+    height: 24px;
+  }
+  #title.idle { color: var(--muted); font-weight: 400; }
+  /* Fade the ends only when the text actually runs past them. */
+  #title.scrolling {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  }
+  .mq-view { overflow: hidden; outline: none; }
+  .mq-track { display: flex; width: max-content; will-change: transform; }
+  .mq-group { white-space: nowrap; flex: none; }
+  @media (prefers-reduced-motion: reduce) {
+    /* Not a transport any more: a plain row the user can scroll themselves. */
+    .mq-view { overflow-x: auto; scrollbar-width: none; }
+    .mq-view::-webkit-scrollbar { display: none; }
+  }
+
+  /* ---------- seek + volume sliders ---------- */
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 24px; background: transparent;
+    cursor: pointer; display: block;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 3px;
+    background: var(--track, var(--surface-3));
+  }
+  input[type=range]::-moz-range-track {
+    height: 6px; border-radius: 3px;
+    background: var(--track, var(--surface-3));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; margin-top: -4px;
+    border-radius: 50%; background: var(--fill); border: none;
+    transition: transform var(--press) var(--ease-out);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px;
+    border-radius: 50%; background: var(--fill); border: none;
+    transition: transform var(--press) var(--ease-out);
+  }
+  input[type=range]:active::-webkit-slider-thumb { transform: scale(1.35); }
+  input[type=range]:active::-moz-range-thumb { transform: scale(1.35); }
+  input[type=range]:focus-visible { outline: none; }
+  input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--accent-soft); }
+  input[type=range]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px var(--accent-soft); }
+
+  #seekwrap { margin-top: 14px; }
+  .times {
+    display: flex; justify-content: space-between;
+    color: var(--muted); font-size: 12px;
+    font-variant-numeric: tabular-nums; /* no width jitter as digits tick */
+    margin-top: 2px;
+  }
+
+  /* ---------- buttons ---------- */
+  button {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--surface-2); color: var(--fg);
+    border: 1px solid transparent; border-radius: var(--r-md);
+    font: inherit; font-size: 14px; font-weight: 500;
+    min-height: 48px; padding: 0 12px;
+    cursor: pointer;
+    transition: transform var(--press) var(--ease-out),
+                background-color 180ms ease,
+                color 180ms ease;
+  }
+  button:active { transform: scale(0.96); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover { background: var(--surface-3); }
+  }
+
+  .transport { display: flex; gap: 6px; margin-top: 14px; }
+  .transport button { flex: 1; padding: 0 4px; }
+  .transport.secondary { margin-top: 6px; }
+  .transport.secondary button { font-size: 13px; min-height: 44px; gap: 8px; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  #playpause {
+    flex: 1.5;
+    background: var(--accent); color: var(--accent-fg);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    #playpause:hover { background: var(--accent-hi); }
+  }
+
+  /* ---------- control rows ---------- */
+  .row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .row > svg { color: var(--muted); }
+  .dt .row { margin-top: 0; }
+  .row .dt-track { flex: 1; min-width: 0; }
+  #mute { flex: 0 0 48px; min-width: 48px; padding: 0; }
+  #mute.muted, #fs.on { color: var(--accent); }
+
+  /* ---------- detent slider (interior.dev/docs/slider-detents) ---------- */
+  .dt { margin-top: 16px; }
+  .dt-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 2px;
+  }
+  .dt-label {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; color: var(--muted);
+  }
+  /* The readout reserves the widest reachable string up front, so the number
+     never reflows as it ticks or as the detent name fades in beside it. */
+  .dt-readout { display: grid; justify-items: end; }
+  .dt-readout > * {
+    grid-area: 1 / 1;
+    white-space: pre; font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dt-sizer { visibility: hidden; }
+  .dt-value { color: var(--fg); }
+  .dt-suffix {
+    color: var(--muted);
+    transition: opacity 220ms var(--ease-out);
+  }
+
+  .dt-track {
+    position: relative; height: 44px; width: 100%;
+    border-radius: var(--r-sm);
+    cursor: grab; touch-action: none; outline: none;
+    /* The carriages span the full track and are then translated by a
+       percentage, so their trailing edge runs past it. Contain that here or
+       it becomes page-wide horizontal scroll. Thumb and ticks always sit
+       inside the track box, so nothing visible is clipped. */
+    overflow: hidden;
+  }
+  .dt-track.dragging { cursor: grabbing; }
+  .dt-track:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .dt-track[aria-disabled=true] { opacity: 0.4; pointer-events: none; }
+
+  .dt-rail {
+    position: absolute; left: 0; right: 0; top: 19px; height: 6px;
+    border-radius: 3px; background: var(--surface-3); overflow: hidden;
+  }
+  /* Thumb-inset band: everything positions as a % of this, so there is no
+     measurement pass and no jump on first paint. */
+  .dt-inset { position: absolute; top: 0; bottom: 0; left: 7px; right: 7px; }
+  .dt-carriage { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+  /* Fill is a clipped translate, never an animated width. */
+  .dt-fill {
+    position: absolute; top: 0; bottom: 0; right: 100%; width: 2000px;
+    background: var(--fill);
+  }
+  .dt-thumb {
+    position: absolute; top: 15px; margin-left: -7px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--fill);
+    transition: transform var(--press) var(--ease-out);
+  }
+  .dt-track.dragging .dt-thumb { transform: scale(1.35); }
+  .dt-tick {
+    position: absolute; top: 31px; width: 2px; height: 5px;
+    margin-left: -1px; border-radius: 1px;
+    background: var(--fill); opacity: 0.35;
+  }
+
+  /* ---------- selects ---------- */
+  .selectwrap { position: relative; flex: 1; min-width: 0; }
+  .selectwrap > svg {
+    position: absolute; right: 12px; top: 50%; margin-top: -8px;
+    width: 16px; height: 16px; color: var(--muted); pointer-events: none;
+  }
+  select {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; min-height: 48px;
+    background: var(--surface-2); color: var(--fg);
+    border: 1px solid transparent; border-radius: var(--r-md);
+    padding: 0 36px 0 12px;
+    font: inherit; font-size: 14px;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    transition: background-color 180ms ease;
+  }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select:disabled { opacity: 0.4; cursor: default; }
+
+  /* ---------- open url ---------- */
+  #urlform { display: flex; gap: 8px; }
+  #urlinput {
+    flex: 1; min-width: 0; min-height: 48px;
+    background: var(--surface-2); color: var(--fg);
+    border: 1px solid transparent; border-radius: var(--r-md);
+    padding: 0 14px; font: inherit; font-size: 15px;
+    transition: border-color 180ms ease;
+  }
+  #urlinput::placeholder { color: var(--placeholder); }
+  #urlinput:focus { outline: none; border-color: var(--accent); }
+  #urlform button { flex: 0 0 auto; padding: 0 18px; }
+
+  /* ---------- file browser ---------- */
+  #crumb {
+    display: block; color: var(--muted); font-size: 12px;
+    margin: 0 0 10px; word-break: break-all;
+    font-variant-numeric: tabular-nums;
+  }
+  #files { list-style: none; padding: 0; margin: 0 -8px; }
+  #files li {
+    display: flex; align-items: center; gap: 12px;
+    min-height: 48px; padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px; word-break: break-word;
+    cursor: pointer;
+    transition: background-color 140ms ease;
+    /* Stagger: decorative only, never blocks input. */
+    animation: rise 260ms var(--ease-out) both;
+    animation-delay: calc(var(--i) * 22ms);
+  }
+  #files li:last-child { border-bottom: none; }
+  #files li:active { background: var(--surface-2); }
+  @media (hover: hover) and (pointer: fine) {
+    #files li:hover { background: var(--surface-2); }
+  }
+  #files li svg { color: var(--muted); }
+  #files li.dir svg { color: var(--dir); }
+  #files li.playing {
+    color: var(--accent);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  #files li.playing svg { color: var(--accent); }
+  #files .empty {
+    color: var(--muted); font-size: 14px; justify-content: center;
+    cursor: default; animation: none;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* Keep opacity/color cues, drop movement. */
+    *, *::before, *::after {
+      animation-duration: 1ms !important;
+      animation-delay: 0ms !important;
+      transition-duration: 120ms !important;
+    }
+    button:active { transform: none; }
+    #files li { animation: none; }
+  }
+</style>
+</head>
+<body class="disconnected">
+
+<!-- Icons: Reicon (reicon.dev), MIT. Inlined as a <symbol> sprite so the
+     page stays self-contained and works with no internet on the LAN. -->
+<svg id="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="play" viewBox="0 0 24 24"><path fill="currentColor" d="M21.409 9.353a2.998 2.998 0 0 1 0 5.294L8.597 21.614C6.534 22.737 4 21.277 4 18.968V5.033c0-2.31 2.534-3.769 4.597-2.648z"/></symbol>
+  <symbol id="pause" viewBox="0 0 24 24"><path fill="currentColor" d="M2 6c0-1.886 0-2.828.586-3.414S4.114 2 6 2s2.828 0 3.414.586S10 4.114 10 6v12c0 1.886 0 2.828-.586 3.414S7.886 22 6 22s-2.828 0-3.414-.586S2 19.886 2 18zm12 0c0-1.886 0-2.828.586-3.414S16.114 2 18 2s2.828 0 3.414.586S22 4.114 22 6v12c0 1.886 0 2.828-.586 3.414S19.886 22 18 22s-2.828 0-3.414-.586S14 19.886 14 18z"/></symbol>
+  <symbol id="stop" viewBox="0 0 24 24"><path fill="currentColor" d="M2 12c0-4.714 0-7.071 1.464-8.536C4.93 2 7.286 2 12 2s7.071 0 8.535 1.464C22 4.93 22 7.286 22 12s0 7.071-1.465 8.535C19.072 22 16.714 22 12 22s-7.071 0-8.536-1.465C2 19.072 2 16.714 2 12"/></symbol>
+  <symbol id="back10" viewBox="0 0 24 24"><g fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><path d="M10.325 7.824a.75.75 0 0 1 .425.676v7a.75.75 0 0 1-1.5 0v-5.44l-1.281 1.026a.75.75 0 0 1-.937-1.172l2.5-2a.75.75 0 0 1 .793-.09M14.25 9.25a1 1 0 0 0-1 1v3.5a1 1 0 1 0 2 0v-3.5a1 1 0 0 0-1-1m-2.5 1a2.5 2.5 0 0 1 5 0v3.5a2.5 2.5 0 0 1-5 0z"/><path d="M11.324 1.675A.75.75 0 0 1 12 1.25q1.104.002 2.15.215c4.906.996 8.6 5.333 8.6 10.535c0 5.937-4.813 10.75-10.75 10.75S1.25 17.937 1.25 12c0-4.41 2.655-8.197 6.45-9.855a.75.75 0 1 1 .6 1.374A9.25 9.25 0 1 0 21.25 12a9.255 9.255 0 0 0-6.5-8.834V4.5a.75.75 0 0 1-1.336.469l-2-2.5a.75.75 0 0 1-.09-.794"/></g></symbol>
+  <symbol id="fwd10" viewBox="0 0 24 24"><g fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><path d="M10.325 7.824a.75.75 0 0 1 .425.676v7a.75.75 0 0 1-1.5 0v-5.44l-1.281 1.026a.75.75 0 0 1-.937-1.172l2.5-2a.75.75 0 0 1 .793-.09M14.25 9.25a1 1 0 0 0-1 1v3.5a1 1 0 1 0 2 0v-3.5a1 1 0 0 0-1-1m-2.5 1a2.5 2.5 0 0 1 5 0v3.5a2.5 2.5 0 0 1-5 0z"/><path d="M12.676 1.675A.75.75 0 0 0 12 1.25q-1.104.002-2.15.215C4.945 2.461 1.25 6.798 1.25 12c0 5.937 4.813 10.75 10.75 10.75S22.75 17.937 22.75 12c0-4.41-2.655-8.197-6.45-9.855a.75.75 0 0 0-.6 1.374A9.25 9.25 0 1 1 2.75 12a9.255 9.255 0 0 1 6.5-8.834V4.5a.75.75 0 0 0 1.336.469l2-2.5a.75.75 0 0 0 .09-.794"/></g></symbol>
+  <symbol id="volume" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 10v4q0 3 3 3h1.43c.37 0 .74.11 1.06.3l2.92 1.83c2.52 1.58 4.59.43 4.59-2.54V7.41c0-2.98-2.07-4.12-4.59-2.54L7.49 6.7c-.32.19-.69.3-1.06.3H5q-3 0-3 3Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6.66 6.66 0 0 1 0 8m1.83-10.5a10.83 10.83 0 0 1 0 13"/></g></symbol>
+  <symbol id="mute" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5.5 10v4q0 3 3 3h1.43c.37 0 .74.11 1.06.3l2.92 1.83c2.52 1.58 4.59.43 4.59-2.54V7.41c0-2.98-2.07-4.12-4.59-2.54L10.99 6.7c-.32.19-.69.3-1.06.3H8.5q-3 0-3 3"/></symbol>
+  <symbol id="gauge" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path d="M12 3.667v2.666m6.836.164l-1.887 1.887m4.718 4.949H19M5.164 6.497l5.893 5.894m-8.724.942H5M8.604 4.28A9.6 9.6 0 0 1 12 3.667c5.339 0 9.667 4.328 9.667 9.666a9.64 9.64 0 0 1-2.831 6.836l-1.885-1.885m-9.901-.001l-1.885 1.885a9.64 9.64 0 0 1-2.832-6.836c0-1.195.217-2.34.614-3.396"/><path fill="currentColor" d="M12 15a1.667 1.667 0 1 0-.001-3.334A1.667 1.667 0 0 0 12 15"/></g></symbol>
+  <symbol id="audio" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M12 3.25a.75.75 0 0 1 .75.75v16a.75.75 0 0 1-1.5 0V4a.75.75 0 0 1 .75-.75m-4 3a.75.75 0 0 1 .75.75v10a.75.75 0 0 1-1.5 0V7A.75.75 0 0 1 8 6.25m8 0a.75.75 0 0 1 .75.75v10a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75m-12 4a.75.75 0 0 1 .75.75v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 1 .75-.75m16 0a.75.75 0 0 1 .75.75v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 1 .75-.75" clip-rule="evenodd"/></symbol>
+  <symbol id="captions" viewBox="0 0 24 24"><g fill="currentColor"><path d="M5.25 16a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1-.75-.75M18 12.25a.75.75 0 0 1 0 1.5h-4a.75.75 0 0 1 0-1.5zM11.75 16a.75.75 0 0 1 .75-.75H14a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75m-.25-3.75a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5zM15.75 16a.75.75 0 0 1 .75-.75H18a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75M7 12.25a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1 0-1.5z"/><path fill-rule="evenodd" d="M9.944 3.25h4.112c1.838 0 3.294 0 4.433.153c1.172.158 2.121.49 2.87 1.238c.748.749 1.08 1.698 1.238 2.87c.153 1.14.153 2.595.153 4.433v.112c0 1.838 0 3.294-.153 4.433c-.158 1.172-.49 2.121-1.238 2.87c-.749.748-1.698 1.08-2.87 1.238c-1.14.153-2.595.153-4.433.153H9.945c-1.838 0-3.294 0-4.433-.153c-1.172-.158-2.121-.49-2.87-1.238c-.748-.749-1.08-1.698-1.238-2.87c-.153-1.14-.153-2.595-.153-4.433v-.112c0-1.838 0-3.294.153-4.433c.158-1.172.49-2.121 1.238-2.87c.749-.748 1.698-1.08 2.87-1.238c1.14-.153 2.595-.153 4.433-.153M5.71 4.89c-1.006.135-1.586.389-2.01.812c-.422.423-.676 1.003-.811 2.009c-.138 1.028-.14 2.382-.14 4.289s.002 3.262.14 4.29c.135 1.005.389 1.585.812 2.008s1.003.677 2.009.812c1.028.138 2.382.14 4.289.14h4c1.907 0 3.262-.002 4.29-.14c1.005-.135 1.585-.389 2.008-.812s.677-1.003.812-2.009c.138-1.028.14-2.382.14-4.289s-.002-3.261-.14-4.29c-.135-1.005-.389-1.585-.812-2.008s-1.003-.677-2.009-.812c-1.027-.138-2.382-.14-4.289-.14h-4c-1.907 0-3.261.002-4.29.14" clip-rule="evenodd"/></g></symbol>
+  <symbol id="chevron" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.333 8.667L12 17L3.667 8.667"/></symbol>
+  <symbol id="link" viewBox="0 0 24 24"><g fill="currentColor"><path d="M15.729 3.884c1.434-1.44 3.532-1.47 4.693-.304c1.164 1.168 1.133 3.28-.303 4.72l-2.423 2.433a.75.75 0 0 0 1.062 1.059l2.424-2.433c1.911-1.919 2.151-4.982.303-6.838c-1.85-1.857-4.907-1.615-6.82.304L9.819 7.692c-1.911 1.919-2.151 4.982-.303 6.837a.75.75 0 1 0 1.063-1.058c-1.164-1.168-1.132-3.28.303-4.72z"/><path d="M14.485 9.47a.75.75 0 0 0-1.063 1.06c1.164 1.168 1.133 3.279-.303 4.72l-4.847 4.866c-1.435 1.44-3.533 1.47-4.694.304c-1.164-1.168-1.132-3.28.303-4.72l2.424-2.433a.75.75 0 0 0-1.063-1.059l-2.424 2.433c-1.911 1.92-2.151 4.982-.303 6.838c1.85 1.858 4.907 1.615 6.82-.304l4.847-4.867c1.911-1.918 2.151-4.982.303-6.837"/></g></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M6.86 1.25h.127c.351 0 .577 0 .798.02a4.75 4.75 0 0 1 2.59 1.073c.17.142.33.302.579.55l.576.577c.846.845 1.171 1.161 1.547 1.37q.328.182.689.286c.413.117.866.124 2.062.124h.425c1.273 0 2.3 0 3.111.102c.841.106 1.556.332 2.144.86q.147.133.28.28c.529.588.754 1.303.86 2.144c.102.812.102 1.838.102 3.111v2.31c0 1.837 0 3.293-.153 4.432c-.158 1.172-.49 2.121-1.238 2.87c-.749.748-1.698 1.08-2.87 1.238c-1.14.153-2.595.153-4.433.153H9.944c-1.838 0-3.294 0-4.433-.153c-1.172-.158-2.121-.49-2.87-1.238c-.748-.749-1.08-1.698-1.238-2.87c-.153-1.14-.153-2.595-.153-4.433V6.86c0-.797 0-1.303.082-1.74A4.75 4.75 0 0 1 5.12 1.331c.438-.082.944-.082 1.74-.082m.09 1.5c-.917 0-1.271.003-1.553.056a3.25 3.25 0 0 0-2.59 2.591c-.054.282-.057.636-.057 1.553V14c0 1.907.002 3.262.14 4.29c.135 1.005.389 1.585.812 2.008s1.003.677 2.009.812c1.028.138 2.382.14 4.289.14h4c1.907 0 3.262-.002 4.29-.14c1.005-.135 1.585-.389 2.008-.812s.677-1.003.812-2.009c.138-1.027.14-2.382.14-4.289v-2.202c0-1.336-.001-2.267-.09-2.975c-.087-.689-.246-1.06-.487-1.328a2 2 0 0 0-.168-.168c-.268-.241-.64-.4-1.328-.487c-.707-.089-1.639-.09-2.975-.09h-.484c-1.048 0-1.724 0-2.363-.182c-.35-.1-.689-.24-1.008-.417c-.58-.324-1.058-.801-1.8-1.543l-.077-.078l-.55-.55a8 8 0 0 0-.503-.482a3.25 3.25 0 0 0-1.771-.734a8 8 0 0 0-.696-.014m5.3 7.25a.75.75 0 0 1 .75-.75h5a.75.75 0 0 1 0 1.5h-5a.75.75 0 0 1-.75-.75" clip-rule="evenodd"/></symbol>
+  <symbol id="film" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M7.25 1.25c-.806 0-1.465.006-2.01.05c-.63.052-1.172.16-1.67.413a4.25 4.25 0 0 0-1.857 1.858c-.253.497-.361 1.04-.413 1.67a23 23 0 0 0-.05 1.783v10.004c.002.681.01 1.251.05 1.732c.052.63.16 1.172.413 1.67a4.25 4.25 0 0 0 1.858 1.857c.497.253 1.04.361 1.67.413c.544.044 1.203.05 2.009.05h9.5c.806 0 1.465-.006 2.01-.05c.63-.052 1.172-.16 1.67-.413a4.25 4.25 0 0 0 1.857-1.857c.253-.498.361-1.04.413-1.67a23 23 0 0 0 .05-1.784V6.972a23 23 0 0 0-.05-1.732c-.052-.63-.16-1.172-.413-1.67a4.25 4.25 0 0 0-1.857-1.857c-.498-.253-1.04-.361-1.67-.413c-.545-.044-1.204-.05-2.01-.05zm14 15v-3.5h-4.5v3.5zm-6-3.5h-6.5v8.5h6.5zm1.5 5h4.493c-.006.34-.017.63-.038.888c-.044.537-.127.86-.255 1.11a2.75 2.75 0 0 1-1.201 1.202c-.252.128-.574.21-1.111.255c-.48.039-1.077.044-1.888.045zm-13.955.888a14 14 0 0 1-.038-.888H7.25v3.5c-.81 0-1.408-.006-1.888-.045c-.537-.044-.86-.127-1.11-.255a2.75 2.75 0 0 1-1.202-1.2c-.128-.252-.21-.574-.255-1.111M2.75 16.25h4.5v-3.5h-4.5zm18.5-5v-3.5h-4.5v3.5zm-6 0v-8.5h-6.5v8.5zm-8 0v-3.5h-4.5v3.5zm13.955-5.888c.02.257.032.548.038.888H16.75v-3.5c.81 0 1.408.006 1.888.045c.537.044.86.127 1.11.255a2.75 2.75 0 0 1 1.202 1.202c.128.25.21.573.255 1.11M7.25 6.25H2.757c.006-.34.017-.63.038-.888c.044-.537.127-.86.255-1.11A2.75 2.75 0 0 1 4.252 3.05c.25-.128.573-.21 1.11-.255c.48-.039 1.077-.044 1.888-.045z" clip-rule="evenodd"/></symbol>
+  <symbol id="music" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M19.19 1.327a2 2 0 0 1 2.56 1.92V15.5c0 .879-.405 1.724-1.148 2.344c-1.45 1.208-3.754 1.208-5.203 0c-.744-.62-1.149-1.465-1.149-2.344s.405-1.724 1.149-2.344c1.337-1.114 3.401-1.2 4.851-.259V8l-10.5 3.063V19.5c0 .879-.405 1.724-1.149 2.344c-1.45 1.208-3.753 1.208-5.202 0c-.744-.62-1.149-1.465-1.149-2.344s.405-1.724 1.149-2.344c1.337-1.114 3.401-1.2 4.851-.259V6.58a2.75 2.75 0 0 1 1.98-2.64zM9.75 9.5l10.5-3.062V3.247a.5.5 0 0 0-.64-.48L10.65 5.38a1.25 1.25 0 0 0-.9 1.2zm-2.109 8.81c.427.356.609.79.609 1.19v.001c0 .401-.181.835-.609 1.192c-.893.744-2.389.744-3.282 0c-.428-.357-.609-.79-.609-1.192c0-.4.181-.835.609-1.191c.893-.745 2.389-.745 3.282 0m8.718-4c.893-.745 2.389-.745 3.282 0c.428.356.609.79.609 1.191s-.181.835-.609 1.192c-.893.744-2.389.744-3.282 0c-.428-.357-.609-.79-.609-1.192c0-.4.181-.835.609-1.191" clip-rule="evenodd"/></symbol>
+  <symbol id="up" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M11.47 3.47a.75.75 0 0 1 1.06 0l6 6a.75.75 0 1 1-1.06 1.06l-4.72-4.72V20a.75.75 0 0 1-1.5 0V5.81l-4.72 4.72a.75.75 0 1 1-1.06-1.06z" clip-rule="evenodd"/></symbol>
+  <symbol id="alert" viewBox="0 0 24 24"><g fill="currentColor"><path d="M12 7.25a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0V8a.75.75 0 0 1 .75-.75M12 17a1 1 0 1 0 0-2a1 1 0 0 0 0 2"/><path fill-rule="evenodd" d="M8.294 4.476C9.366 3.115 10.502 2.25 12 2.25s2.634.865 3.706 2.226c1.054 1.34 2.17 3.32 3.6 5.855l.436.772c1.181 2.095 2.115 3.75 2.605 5.077c.5 1.358.62 2.59-.138 3.677c-.735 1.055-1.962 1.486-3.51 1.69c-1.541.203-3.615.203-6.274.203h-.85c-2.66 0-4.733 0-6.274-.203c-1.548-.204-2.775-.635-3.51-1.69c-.758-1.087-.639-2.32-.138-3.677c.49-1.328 1.424-2.982 2.605-5.077l.436-.772c1.429-2.535 2.546-4.516 3.6-5.855m1.179.928C8.499 6.641 7.437 8.52 5.965 11.13l-.364.645c-1.226 2.174-2.097 3.724-2.54 4.925c-.438 1.186-.378 1.814-.04 2.3c.361.516 1.038.87 2.476 1.06c1.432.188 3.406.19 6.14.19h.727c2.733 0 4.707-.002 6.14-.19c1.437-.19 2.114-.544 2.474-1.06c.339-.486.4-1.114-.038-2.3c-.444-1.201-1.315-2.751-2.541-4.925l-.364-.645c-1.472-2.61-2.534-4.489-3.508-5.726C13.562 4.18 12.813 3.75 12 3.75s-1.562.429-2.527 1.654" clip-rule="evenodd"/></g></symbol>
+  <symbol id="palette" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M5.969 1.25h.062c.674 0 1.225 0 1.672.037c.463.037.882.118 1.272.317a3.25 3.25 0 0 1 1.42 1.42c.2.391.28.81.318 1.273c.037.447.037.998.037 1.672v.463l2.056-2.056c.476-.476.865-.865 1.207-1.156c.355-.3.708-.54 1.125-.675a3.25 3.25 0 0 1 2.008 0c.418.136.77.374 1.125.675c.342.29.732.68 1.208 1.156l.044.045c.476.476.866.865 1.156 1.208c.301.354.54.707.675 1.124a3.25 3.25 0 0 1 0 2.009c-.135.417-.374.77-.675 1.124c-.29.342-.68.732-1.156 1.208l-2.156 2.156h.664c.674 0 1.225 0 1.672.037c.463.037.882.118 1.273.317a3.25 3.25 0 0 1 1.42 1.42c.199.391.28.81.317 1.273c.037.447.037.998.037 1.672v.062c0 .674 0 1.225-.037 1.672c-.037.463-.118.882-.317 1.273a3.25 3.25 0 0 1-1.42 1.42c-.391.199-.81.28-1.273.317c-.447.037-.998.037-1.672.037H5.97c-.674 0-1.225 0-1.672-.037c-.463-.037-.882-.118-1.272-.317a3.25 3.25 0 0 1-1.42-1.42c-.2-.391-.28-.81-.318-1.273c-.037-.447-.037-.998-.037-1.672V5.97c0-.674 0-1.224.037-1.672c.037-.463.118-.882.317-1.272a3.25 3.25 0 0 1 1.42-1.42c.391-.2.81-.28 1.273-.318c.448-.037.998-.037 1.672-.037m4.27 20H18c.712 0 1.202 0 1.58-.032c.371-.03.57-.085.715-.159a1.75 1.75 0 0 0 .764-.765c.074-.144.13-.343.16-.713c.03-.38.031-.869.031-1.581s0-1.202-.032-1.58c-.03-.371-.085-.57-.159-.715a1.75 1.75 0 0 0-.765-.764c-.144-.074-.343-.13-.713-.16c-.38-.03-.869-.031-1.581-.031h-2.133l-5.176 5.176a3.1 3.1 0 0 1-.295 1.05a3 3 0 0 1-.157.274m.511-3.504l7.69-7.69c.504-.504.85-.85 1.096-1.14c.24-.284.342-.464.392-.618a1.75 1.75 0 0 0 0-1.081c-.05-.154-.152-.334-.392-.617c-.247-.29-.592-.637-1.096-1.14c-.504-.504-.85-.85-1.14-1.096c-.283-.24-.463-.342-.617-.392a1.75 1.75 0 0 0-1.082 0c-.153.05-.333.151-.617.392c-.29.246-.636.592-1.14 1.095l-2.142 2.142c-.621.622-.775.794-.857.992c-.081.196-.095.426-.095 1.294zm-1.5.295c0 .69-.001 1.168-.032 1.54c-.03.37-.085.57-.159.713a1.75 1.75 0 0 1-.765.765c-.144.074-.343.13-.713.16c-.38.03-.869.031-1.581.031s-1.202 0-1.58-.032c-.371-.03-.57-.085-.714-.159a1.75 1.75 0 0 1-.765-.765c-.074-.144-.13-.343-.16-.713c-.03-.38-.031-.869-.031-1.581V6c0-.712 0-1.202.032-1.58c.03-.371.085-.57.159-.714a1.75 1.75 0 0 1 .765-.765c.144-.074.343-.13.713-.16c.38-.03.869-.031 1.581-.031s1.202 0 1.58.032c.371.03.57.085.714.159c.33.168.597.435.765.765c.074.144.13.343.16.713c.03.38.031.869.031 1.581v12.041m-5 .959a.75.75 0 0 1 .75-.75h2a.75.75 0 0 1 0 1.5H5a.75.75 0 0 1-.75-.75" clip-rule="evenodd"/></symbol>
+  <symbol id="fullscreen" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M9.944 1.25H10a.75.75 0 0 1 0 1.5c-1.907 0-3.261.002-4.29.14c-1.005.135-1.585.389-2.008.812S3.025 4.705 2.89 5.71c-.138 1.029-.14 2.383-.14 4.29a.75.75 0 0 1-1.5 0v-.056c0-1.838 0-3.294.153-4.433c.158-1.172.49-2.121 1.238-2.87c.749-.748 1.698-1.08 2.87-1.238c1.14-.153 2.595-.153 4.433-.153m8.345 1.64c-1.027-.138-2.382-.14-4.289-.14a.75.75 0 0 1 0-1.5h.056c1.838 0 3.294 0 4.433.153c1.172.158 2.121.49 2.87 1.238c.748.749 1.08 1.698 1.238 2.87c.153 1.14.153 2.595.153 4.433V10a.75.75 0 0 1-1.5 0c0-1.907-.002-3.261-.14-4.29c-.135-1.005-.389-1.585-.812-2.008s-1.003-.677-2.009-.812M2 13.25a.75.75 0 0 1 .75.75c0 1.907.002 3.262.14 4.29c.135 1.005.389 1.585.812 2.008s1.003.677 2.009.812c1.028.138 2.382.14 4.289.14a.75.75 0 0 1 0 1.5h-.056c-1.838 0-3.294 0-4.433-.153c-1.172-.158-2.121-.49-2.87-1.238c-.748-.749-1.08-1.698-1.238-2.87c-.153-1.14-.153-2.595-.153-4.433V14a.75.75 0 0 1 .75-.75m20 0a.75.75 0 0 1 .75.75v.056c0 1.838 0 3.294-.153 4.433c-.158 1.172-.49 2.121-1.238 2.87c-.749.748-1.698 1.08-2.87 1.238c-1.14.153-2.595.153-4.433.153H14a.75.75 0 0 1 0-1.5c1.907 0 3.262-.002 4.29-.14c1.005-.135 1.585-.389 2.008-.812s.677-1.003.812-2.009c.138-1.027.14-2.382.14-4.289a.75.75 0 0 1 .75-.75" clip-rule="evenodd"/></symbol>
+  <symbol id="unfullscreen" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M14 1.25a.75.75 0 0 1 .75.75c0 1.907.002 3.261.14 4.29c.135 1.005.389 1.585.812 2.008s1.003.677 2.009.812c1.027.138 2.382.14 4.289.14a.75.75 0 0 1 0 1.5h-.056c-1.838 0-3.294 0-4.433-.153c-1.172-.158-2.121-.49-2.87-1.238c-.748-.749-1.08-1.698-1.238-2.87c-.153-1.14-.153-2.595-.153-4.433V2a.75.75 0 0 1 .75-.75m-4 0a.75.75 0 0 1 .75.75v.056c0 1.838 0 3.294-.153 4.433c-.158 1.172-.49 2.121-1.238 2.87c-.749.748-1.698 1.08-2.87 1.238c-1.14.153-2.595.153-4.433.153H2a.75.75 0 0 1 0-1.5c1.907 0 3.261-.002 4.29-.14c1.005-.135 1.585-.389 2.008-.812s.677-1.003.812-2.009c.138-1.028.14-2.382.14-4.289a.75.75 0 0 1 .75-.75M1.25 14a.75.75 0 0 1 .75-.75h.056c1.838 0 3.294 0 4.433.153c1.172.158 2.121.49 2.87 1.238c.748.749 1.08 1.698 1.238 2.87c.153 1.14.153 2.595.153 4.433V22a.75.75 0 0 1-1.5 0c0-1.907-.002-3.262-.14-4.29c-.135-1.005-.389-1.585-.812-2.008s-1.003-.677-2.009-.812c-1.028-.138-2.382-.14-4.289-.14a.75.75 0 0 1-.75-.75m20.694-.75H22a.75.75 0 0 1 0 1.5c-1.907 0-3.262.002-4.29.14c-1.005.135-1.585.389-2.008.812s-.677 1.003-.812 2.009c-.138 1.027-.14 2.382-.14 4.289a.75.75 0 0 1-1.5 0v-.056c0-1.838 0-3.294.153-4.433c.158-1.172.49-2.121 1.238-2.87c.749-.748 1.698-1.08 2.87-1.238c1.14-.153 2.595-.153 4.433-.153" clip-rule="evenodd"/></symbol>
+  <symbol id="prev" viewBox="0 0 24 24"><path fill="currentColor" d="M5.75 5.5a.75.75 0 0 1 1.5 0v4.825q.098-.087.207-.165l6.732-4.776c1.39-.986 3.315.008 3.315 1.713v9.796c0 1.705-1.925 2.7-3.315 1.713L7.457 13.83a2 2 0 0 1-.207-.165V18.5a.75.75 0 0 1-1.5 0z"/></symbol>
+  <symbol id="next" viewBox="0 0 24 24"><path fill="currentColor" d="M18.254 5.5a.75.75 0 0 0-1.5 0v4.825a2 2 0 0 0-.207-.165L9.815 5.384C8.425 4.398 6.5 5.392 6.5 7.097v9.796c0 1.705 1.924 2.7 3.315 1.713l6.732-4.776a2 2 0 0 0 .207-.165V18.5a.75.75 0 0 0 1.5 0z"/></symbol>
+</svg>
+
+<div id="connbar" role="status">
+  <svg width="16" height="16"><use href="#alert"/></svg>
+  <span>Disconnected — reconnecting…</span>
+</div>
+
+<main>
+  <section class="card" aria-label="Playback">
+    <div id="title" class="idle">Nothing playing</div>
+
+    <div id="seekwrap">
+      <input type="range" id="seek" min="0" max="100" step="0.1" value="0" aria-label="Seek">
+      <div class="times">
+        <span id="pos">0:00</span>
+        <span id="dur">0:00</span>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button id="prev" aria-label="Previous file" disabled>
+        <svg width="20" height="20"><use href="#prev"/></svg>
+      </button>
+      <button id="back" aria-label="Back 10 seconds">
+        <svg width="22" height="22"><use href="#back10"/></svg>
+      </button>
+      <button id="playpause" aria-label="Play">
+        <svg width="22" height="22"><use href="#play" id="ppicon"/></svg>
+      </button>
+      <button id="fwd" aria-label="Forward 10 seconds">
+        <svg width="22" height="22"><use href="#fwd10"/></svg>
+      </button>
+      <button id="next" aria-label="Next file" disabled>
+        <svg width="20" height="20"><use href="#next"/></svg>
+      </button>
+    </div>
+
+    <div class="transport secondary">
+      <button id="stop" aria-label="Stop">
+        <svg width="18" height="18"><use href="#stop"/></svg>Stop
+      </button>
+      <button id="fs" aria-label="Fullscreen" aria-pressed="false">
+        <svg width="18" height="18"><use href="#fullscreen" id="fsicon"/></svg>Fullscreen
+      </button>
+    </div>
+
+    <div class="dt">
+      <div class="dt-head">
+        <span class="dt-label">
+          <svg width="20" height="20" aria-hidden="true"><use href="#volume"/></svg>
+          Volume
+        </span>
+        <span class="dt-readout" id="volout" aria-hidden="true"></span>
+      </div>
+      <div class="row">
+        <div class="dt-track" id="vol"></div>
+        <button id="mute" aria-label="Mute" aria-pressed="false">
+          <svg width="20" height="20"><use href="#volume" id="muteicon"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="dt">
+      <div class="dt-head">
+        <span class="dt-label">
+          <svg width="20" height="20" aria-hidden="true"><use href="#gauge"/></svg>
+          Speed
+        </span>
+        <span class="dt-readout" id="speedout" aria-hidden="true"></span>
+      </div>
+      <div class="dt-track" id="speed"></div>
+    </div>
+
+    <div class="row">
+      <svg width="20" height="20" aria-hidden="true"><use href="#audio"/></svg>
+      <div class="selectwrap">
+        <select id="atrack" aria-label="Audio track"></select>
+        <svg aria-hidden="true"><use href="#chevron"/></svg>
+      </div>
+    </div>
+
+    <div class="row">
+      <svg width="20" height="20" aria-hidden="true"><use href="#captions"/></svg>
+      <div class="selectwrap">
+        <select id="strack" aria-label="Subtitle track"></select>
+        <svg aria-hidden="true"><use href="#chevron"/></svg>
+      </div>
+    </div>
+  </section>
+
+  <div class="card tabs">
+    <div class="tablist" id="tablist" role="tablist" aria-label="Sections">
+      <span class="tab-ind" aria-hidden="true"></span>
+      <button data-tab="files" role="tab" aria-selected="true" tabindex="0">
+        <svg width="16" height="16" aria-hidden="true"><use href="#folder"/></svg>
+        <span class="tab-label"><span class="tab-sizer" aria-hidden="true">Files</span><span class="tab-text">Files</span></span>
+      </button>
+      <button data-tab="url" role="tab" aria-selected="false" tabindex="-1">
+        <svg width="16" height="16" aria-hidden="true"><use href="#link"/></svg>
+        <span class="tab-label"><span class="tab-sizer" aria-hidden="true">URL</span><span class="tab-text">URL</span></span>
+      </button>
+      <button data-tab="theme" role="tab" aria-selected="false" tabindex="-1">
+        <svg width="16" height="16" aria-hidden="true"><use href="#palette"/></svg>
+        <span class="tab-label"><span class="tab-sizer" aria-hidden="true">Theme</span><span class="tab-text">Theme</span></span>
+      </button>
+    </div>
+
+    <div id="tabpanels">
+      <div class="tabpanel" data-panel="files">
+        <span id="crumb"></span>
+        <ul id="files"></ul>
+      </div>
+      <div class="tabpanel" data-panel="url">
+        <form id="urlform">
+          <input id="urlinput" type="url" inputmode="url" autocomplete="off"
+                 autocapitalize="off" spellcheck="false"
+                 placeholder="https://youtube.com/watch?v=…" aria-label="Media URL">
+          <button type="submit">Play</button>
+        </form>
+      </div>
+      <div class="tabpanel" data-panel="theme">
+        <div class="themes" id="themes" role="group" aria-label="Colour scheme">
+          <button data-t="cyberpunk" aria-pressed="true"><span class="sw"></span>Cyberpunk</button>
+          <button data-t="synthwave" aria-pressed="false"><span class="sw"></span>Synthwave</button>
+          <button data-t="crt" aria-pressed="false"><span class="sw"></span>Terminal</button>
+          <button data-t="slate" aria-pressed="false"><span class="sw"></span>Slate</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer id="serverbar">
+  <span class="dot" aria-hidden="true"></span>
+  <span id="serveraddr">…</span>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = {};
+let seeking = false;
+
+function fmt(s) {
+  if (s == null || isNaN(s)) return "0:00";
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
+}
+
+// Only touch the DOM when the value actually changed — render() runs twice a
+// second for hours on end.
+function set(el, key, val) {
+  if (el["_" + key] === val) return;
+  el["_" + key] = val;
+  if (key === "text") el.textContent = val;
+  else if (key === "icon") el.setAttribute("href", val);
+  else el[key] = val;
+}
+
+function fill(el, pct) {
+  const p = Math.max(0, Math.min(100, pct));
+  set(el, "style_track",
+      `linear-gradient(90deg, var(--fill) ${p}%, var(--surface-3) ${p}%)`);
+  el.style.setProperty("--track", el._style_track);
+}
+
+// ---------- detent slider ----------
+// Vanilla port of interior.dev/docs/slider-detents. Stops you can feel: inside
+// the pull radius the pointer hands the value to the detent and the thumb
+// springs ahead of the finger to show it happened.
+const THUMB = 14;
+const tidy = v => Math.round(v * 1e6) / 1e6;
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Minimal spring integrator. rAF runs only while settling, never at idle.
+function spring(onFrame, stiffness, damping, mass) {
+  let pos = 0, vel = 0, target = 0, raf = 0, last = 0;
+  const tick = now => {
+    const dt = Math.min((now - last) / 1000, 1 / 30);
+    last = now;
+    const steps = Math.max(1, Math.ceil(dt * 240));
+    const h = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      vel += (-stiffness * (pos - target) - damping * vel) / mass * h;
+      pos += vel * h;
+    }
+    if (Math.abs(pos - target) < 0.01 && Math.abs(vel) < 0.05) {
+      pos = target; vel = 0; raf = 0;
+    } else {
+      raf = requestAnimationFrame(tick);
+    }
+    onFrame(pos);
+  };
+  return {
+    set(v) {
+      if (v === target) return;
+      target = v;
+      if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick); }
+    },
+    jump(v) {
+      target = pos = v; vel = 0;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0; onFrame(pos);
+    },
+  };
+}
+
+function detentSlider(track, out, o) {
+  const {min, max, step, format, label, onCommit} = o;
+  const span = max - min;
+  const pull = o.pull ?? span * 0.045;
+  const detents = (o.detents || []).map(d => typeof d === "number" ? {value: d} : d);
+
+  track.innerHTML =
+    '<div class="dt-rail"><div class="dt-inset"><div class="dt-carriage">' +
+      '<div class="dt-fill"></div></div></div></div>' +
+    '<div class="dt-inset dt-ticks"></div>' +
+    '<div class="dt-inset"><div class="dt-carriage"><div class="dt-thumb"></div></div></div>';
+
+  const carriages = track.querySelectorAll(".dt-carriage");
+  const ticks = track.querySelector(".dt-ticks");
+  for (const d of detents) {
+    const t = document.createElement("span");
+    t.className = "dt-tick";
+    t.style.left = (span > 0 ? (d.value - min) / span * 100 : 0) + "%";
+    ticks.appendChild(t);
+  }
+
+  // Measure the widest reachable string into the readout so it never reflows.
+  const widest = [format(min), format(max)]
+    .concat(detents.map(d => d.label ? format(d.value) + " · " + d.label : format(d.value)))
+    .reduce((a, b) => b.length > a.length ? b : a, "");
+  const sizer = document.createElement("span");
+  sizer.className = "dt-sizer";
+  sizer.textContent = widest;
+  const live = document.createElement("span");
+  live.className = "dt-value";
+  const num = document.createTextNode("");
+  const suffix = document.createElement("span");
+  suffix.className = "dt-suffix";
+  live.append(num, suffix);
+  out.append(sizer, live);
+
+  const move = spring(p => {
+    const t = "translateX(" + p + "%)";
+    // Written straight onto the two carriages — a CSS var on the parent would
+    // recalc every child instead.
+    carriages[0].style.transform = t;
+    carriages[1].style.transform = t;
+  }, 520, 34, 0.45);
+
+  track.setAttribute("role", "slider");
+  track.tabIndex = 0;
+  track.setAttribute("aria-orientation", "horizontal");
+  track.setAttribute("aria-valuemin", min);
+  track.setAttribute("aria-valuemax", max);
+  track.setAttribute("aria-label", label);
+
+  let value = o.value ?? min, marked = -1, held = false, lastLabel = "";
+
+  function paint() {
+    const pct = span > 0 ? Math.min(1, Math.max(0, (value - min) / span)) : 0;
+    if (REDUCED) move.jump(pct * 100); else move.set(pct * 100);
+    const name = detents.find(d => tidy(d.value) === tidy(value))?.label || "";
+    if (name) lastLabel = name;
+    num.nodeValue = format(value);
+    // Keep the old label mounted so it fades out rather than vanishing.
+    suffix.textContent = lastLabel ? " · " + lastLabel : "";
+    suffix.style.opacity = name ? "1" : "0";
+    track.setAttribute("aria-valuenow", value);
+    track.setAttribute("aria-valuetext", name ? format(value) + ", " + name : format(value));
+  }
+
+  function commit(next) {
+    const settled = Math.min(max, Math.max(min, tidy(next)));
+    const i = detents.findIndex(d => tidy(d.value) === settled);
+    if (i !== marked) {
+      marked = i;
+      if (i >= 0 && held) navigator.vibrate?.(6);
+    }
+    if (settled === value) return;
+    value = settled;
+    paint();
+    onCommit(settled);
+  }
+
+  function capture(clientX) {
+    const rect = track.getBoundingClientRect();
+    const travel = rect.width - THUMB;
+    if (travel <= 0 || span <= 0) return null;
+    const ratio = (clientX - rect.left - THUMB / 2) / travel;
+    const raw = Math.min(max, Math.max(min, min + ratio * span));
+    let best = -1, nearest = pull;
+    for (let i = 0; i < detents.length; i++) {
+      const dist = Math.abs(raw - detents[i].value);
+      if (dist <= nearest) { nearest = dist; best = i; }
+    }
+    if (best >= 0) return detents[best].value;
+    return min + Math.round((raw - min) / step) * step;
+  }
+
+  const release = () => {
+    if (!held) return;
+    held = false;
+    track.classList.remove("dragging");
+  };
+
+  track.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    track.setPointerCapture?.(e.pointerId);
+    track.focus({preventScroll: true});
+    held = true;
+    track.classList.add("dragging");
+    const n = capture(e.clientX);
+    if (n !== null) commit(n);
+  });
+  track.addEventListener("pointermove", e => {
+    if (!held) return;
+    const n = capture(e.clientX);
+    if (n !== null) commit(n);
+  });
+  for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    track.addEventListener(ev, release);
+  }
+  addEventListener("blur", release);
+
+  function toDetent(dir) {
+    const vals = detents.map(d => d.value).sort((a, b) => a - b);
+    const target = dir > 0
+      ? vals.find(v => v > value + 1e-6)
+      : vals.filter(v => v < value - 1e-6).pop();
+    commit(target ?? (dir > 0 ? max : min));
+  }
+
+  track.addEventListener("keydown", e => {
+    const fwd = e.key === "ArrowRight" || e.key === "ArrowUp";
+    const back = e.key === "ArrowLeft" || e.key === "ArrowDown";
+    // Arrows move by exactly one step and ignore detent capture, so a sticky
+    // detent can never make an in-between value unreachable.
+    if (fwd || back) {
+      const dir = fwd ? 1 : -1;
+      if (e.shiftKey) toDetent(dir); else commit(value + dir * step);
+    } else if (e.key === "PageUp") toDetent(1);
+    else if (e.key === "PageDown") toDetent(-1);
+    else if (e.key === "Home") commit(min);
+    else if (e.key === "End") commit(max);
+    else return;
+    e.preventDefault();
+  });
+
+  paint();
+
+  return {
+    setValue(v) {
+      if (held) return; // never fight the finger
+      const settled = Math.min(max, Math.max(min, tidy(v)));
+      if (settled === value) return;
+      value = settled;
+      marked = detents.findIndex(d => tidy(d.value) === settled);
+      paint();
+    },
+  };
+}
+
+// ---------- title marquee ----------
+// Vanilla port of interior.dev/docs/logo-marquee for a single line of text.
+// Two departures from the original: it only becomes a transport when the text
+// actually overflows (a short filename has no business sliding around), and
+// the focus-reveal nudge is not ported because nothing inside is focusable.
+function marquee(host, {speed = 40, gap = 48} = {}) {
+  const view = document.createElement("div");
+  view.className = "mq-view";
+  const track = document.createElement("div");
+  track.className = "mq-track";
+  track.style.gap = gap + "px";
+  view.append(track);
+  // replace, not append: the host carries placeholder text in the HTML as a
+  // no-JS fallback, and it would otherwise render on top of the strip.
+  host.replaceChildren(view);
+  if (REDUCED) view.tabIndex = 0;
+
+  const MAX = 12, RAMP = 0.19;
+  let text = "", copies = 0, span = 0, offset = 0, rate = 0;
+  let held = false, near = true, raf = 0, last = 0, active = false;
+
+  const paint = () => {
+    track.style.transform = (!active || REDUCED)
+      ? "translate3d(0,0,0)"
+      : "translate3d(" + (offset - span).toFixed(2) + "px,0,0)";
+  };
+
+  function build(n) {
+    copies = n;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < n; i++) {
+      const s = document.createElement("span");
+      s.className = "mq-group";
+      s.textContent = text;
+      // Only one copy is real, so a screen reader reads the title once.
+      if (i !== 0) s.setAttribute("aria-hidden", "true");
+      frag.append(s);
+    }
+    track.replaceChildren(frag);
+  }
+
+  function layout() {
+    if (!copies) build(1);
+    const w = track.firstChild.getBoundingClientRect().width;
+    const room = view.getBoundingClientRect().width;
+    active = !REDUCED && w > room + 1;
+    host.classList.toggle("scrolling", active);
+    span = active ? w + gap : 0;
+    // Enough repeats that a wide viewport never runs out of content and the
+    // wrap lands pixel-identical to the position before it.
+    const want = active ? Math.max(3, Math.min(MAX, Math.ceil(room / span) + 2)) : 1;
+    if (want !== copies) build(want);
+    if (!active) { offset = 0; stop(); } else if (near) start();
+    paint();
+  }
+
+  function tick(now) {
+    raf = requestAnimationFrame(tick);
+    // Clamped so returning from a background tab resumes instead of teleporting.
+    const dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
+    last = now;
+    if (!span) return;
+    // Ramp rather than cut, and never reset offset: entry eases the strip to a
+    // stop, leaving resumes from the pixel it stopped on.
+    rate += ((held ? 0 : 1) - rate) * (1 - Math.exp(-dt / RAMP));
+    let x = offset - speed * rate * dt;
+    if (rate > 0.002) { const m = x % span; x = m > 0 ? m - span : m; }
+    offset = x;
+    paint();
+    if (held && rate < 0.002) stop(); // fully settled: stop burning frames
+  }
+
+  function start() {
+    if (!raf && active && near && !REDUCED) { last = 0; raf = requestAnimationFrame(tick); }
+  }
+  function stop() { if (raf) cancelAnimationFrame(raf); raf = 0; }
+
+  const setHeld = v => { held = v; start(); };
+  for (const e of ["pointerenter", "pointerdown", "focusin"]) view.addEventListener(e, () => setHeld(true));
+  for (const e of ["pointerleave", "focusout"]) view.addEventListener(e, () => setHeld(false));
+  addEventListener("pointerup", () => setHeld(false));
+  addEventListener("blur", () => setHeld(false));
+
+  // Unsubscribe the loop entirely while the strip is off-screen.
+  new IntersectionObserver(es => {
+    near = es[es.length - 1].isIntersecting;
+    near ? start() : stop();
+  }, {rootMargin: "96px"}).observe(view);
+
+  // Re-measure on viewport changes and on the theme's monospace font swap.
+  const ro = new ResizeObserver(() => layout());
+  ro.observe(view);
+  ro.observe(track);
+
+  return {
+    setText(s) {
+      if (s === text) return;
+      text = s;
+      offset = 0;
+      build(copies || 1);
+      layout();
+    },
+    relayout: layout,
+  };
+}
+
+// ---------- tabs ----------
+// Vanilla port of interior.dev/docs/tabs.
+function initTabs(list, host) {
+  const tabs = [...list.querySelectorAll("button[data-tab]")];
+  const ind = list.querySelector(".tab-ind");
+  const panels = new Map([...host.children].map(p => [p.dataset.panel, p]));
+  let current = null;
+
+  // Pair each tab with its panel so a screen reader is handed one section of
+  // content rather than all of them stacked.
+  for (const [v, p] of panels) {
+    const t = tabs.find(b => b.dataset.tab === v);
+    t.id = "tab-" + v;
+    t.setAttribute("aria-controls", "panel-" + v);
+    p.id = "panel-" + v;
+    p.setAttribute("role", "tabpanel");
+    p.setAttribute("aria-labelledby", "tab-" + v);
+    p.tabIndex = 0;
+  }
+
+  // Reuses the detent slider's integrator; interrupting a move resumes from
+  // where the bar currently is instead of restarting it.
+  const px = spring(v => { ind.style.left = v + "px"; }, 620, 42, 0.35);
+  const pw = spring(v => { ind.style.width = v + "px"; }, 620, 42, 0.35);
+
+  function measure(jump) {
+    const btn = tabs.find(t => t.dataset.tab === current);
+    if (!btn || !btn.offsetWidth) return;
+    ind.style.opacity = "1";
+    if (jump || REDUCED) { px.jump(btn.offsetLeft); pw.jump(btn.offsetWidth); }
+    else { px.set(btn.offsetLeft); pw.set(btn.offsetWidth); }
+  }
+
+  function select(next, jump) {
+    if (next === current || !panels.has(next)) return;
+    const from = tabs.findIndex(t => t.dataset.tab === current);
+    const to = tabs.findIndex(t => t.dataset.tab === next);
+    const dir = from < 0 ? 0 : (to < from ? -1 : 1);
+    current = next;
+    for (const t of tabs) {
+      const on = t.dataset.tab === current;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1; // only the selected tab sits in the page tab order
+    }
+    // Only the selected panel is mounted; re-inserting restarts its animation.
+    const p = panels.get(current);
+    p.style.setProperty("--dir", (dir * 10) + "px");
+    host.replaceChildren(p);
+    measure(jump);
+    try { localStorage.setItem("mpvremote-tab", current); } catch (e) {}
+  }
+
+  for (const t of tabs) t.onclick = () => select(t.dataset.tab);
+
+  list.addEventListener("keydown", e => {
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    let to;
+    if (e.key === "ArrowRight") to = (i + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") to = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") to = 0;
+    else if (e.key === "End") to = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    tabs[to].focus();
+    select(tabs[to].dataset.tab);
+  });
+
+  // Tab widths shift when the theme swaps to a monospace font; re-read rather
+  // than leave the bar on stale measurements.
+  const ro = new ResizeObserver(() => measure(true));
+  for (const t of tabs) ro.observe(t);
+
+  let saved = null;
+  try { saved = localStorage.getItem("mpvremote-tab"); } catch (e) {}
+  select(panels.has(saved) ? saved : tabs[0].dataset.tab, true);
+}
+
+async function cmd(...c) {
+  await fetch("/api/command", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({command: c}),
+  });
+}
+
+async function open_(target) {
+  await fetch("/api/open", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({target}),
+  });
+}
+
+function render() {
+  const idle = !state["path"];
+  const name = state["media-title"] || state["path"];
+  titleMarquee.setText(idle ? "Nothing playing" : (name || "Loading…"));
+  $("title").classList.toggle("idle", idle);
+
+  const paused = !!state["pause"];
+  set($("ppicon"), "icon", paused ? "#play" : "#pause");
+  set($("playpause"), "ariaLabel", paused ? "Play" : "Pause");
+
+  const dur = state["duration"] || 0, pos = state["time-pos"] || 0;
+  set($("seek"), "max", dur || 100);
+  set($("seek"), "disabled", !dur);
+  if (!seeking) {
+    set($("seek"), "value", pos);
+    fill($("seek"), dur ? pos / dur * 100 : 0);
+  }
+  set($("pos"), "text", fmt(pos));
+  set($("dur"), "text", fmt(dur));
+
+  volSlider.setValue(state["volume"] ?? 100);
+  speedSlider.setValue(state["speed"] ?? 1);
+
+  const muted = !!state["mute"];
+  set($("muteicon"), "icon", muted ? "#mute" : "#volume");
+  set($("mute"), "ariaPressed", String(muted));
+  $("mute").classList.toggle("muted", muted);
+
+  markPlaying();
+  syncSiblings();
+  updateSkip();
+
+  const fs = !!state["fullscreen"];
+  set($("fsicon"), "icon", fs ? "#unfullscreen" : "#fullscreen");
+  set($("fs"), "ariaPressed", String(fs));
+  set($("fs"), "ariaLabel", fs ? "Exit fullscreen" : "Fullscreen");
+  $("fs").classList.toggle("on", fs);
+
+  renderTracks();
+}
+
+function renderTracks() {
+  const tracks = state["track-list"] || [];
+  for (const [kind, sel] of [["audio", $("atrack")], ["sub", $("strack")]]) {
+    const items = tracks.filter(t => t.type === kind);
+    const opts = (kind === "sub" ? [{id: "no", title: "Off", selected: !items.some(t => t.selected)}] : [])
+      .concat(items.map(t => ({
+        id: t.id,
+        title: [t.lang, t.title].filter(Boolean).join(" — ") || "Track " + t.id,
+        selected: t.selected,
+      })));
+    if (!opts.length) opts.push({id: "no", title: "None available", selected: true});
+    const sig = JSON.stringify(opts);
+    if (sel.dataset.sig === sig) continue;
+    sel.dataset.sig = sig;
+    sel.replaceChildren(...opts.map(o => {
+      const el = document.createElement("option");
+      el.value = o.id; el.textContent = o.title; el.selected = !!o.selected;
+      return el;
+    }));
+    sel.disabled = items.length === 0;
+  }
+}
+
+// ---------- WebSocket ----------
+function connect() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  const ws = new WebSocket(proto + location.host + "/ws");
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if ("status" in msg) Object.assign(state, msg.status);
+    else if ("connected" in msg) {
+      if (!msg.connected) for (const k in state) delete state[k];
+    } else Object.assign(state, msg);
+    document.body.classList.remove("disconnected");
+    render();
+  };
+  ws.onclose = () => {
+    document.body.classList.add("disconnected");
+    setTimeout(connect, 2000);
+  };
+}
+
+// ---------- controls ----------
+$("playpause").onclick = () => cmd("cycle", "pause");
+$("stop").onclick = () => cmd("stop");
+$("fs").onclick = () => cmd("cycle", "fullscreen");
+
+// ---------- next / previous file ----------
+// Siblings come from the playing file's own folder, not from whatever the
+// browser happens to be showing, so this still works after a page reload, when
+// you have navigated elsewhere in the browser, or when playback was started
+// from mpv itself.
+let siblings = {folder: null, list: []};
+
+function playingFolder() {
+  const p = state["path"];
+  if (!p || p.includes("://")) return null; // a URL has no siblings
+  const i = p.lastIndexOf("/");
+  return i > 0 ? p.slice(0, i) : null;
+}
+
+async function syncSiblings() {
+  const folder = playingFolder();
+  if (folder === siblings.folder) return;
+  siblings = {folder, list: []};
+  if (folder) {
+    const r = await fetch("/api/browse?path=" + encodeURIComponent(folder));
+    // a slower response for a folder we have since left must not overwrite
+    if (r.ok && playingFolder() === folder) {
+      siblings.list = (await r.json()).entries.filter(e => !e.is_dir).map(e => e.path);
+    }
+  }
+  updateSkip();
+}
+
+function updateSkip() {
+  const i = siblings.list.indexOf(state["path"] ?? "");
+  set($("prev"), "disabled", !(i > 0));
+  set($("next"), "disabled", !(i >= 0 && i < siblings.list.length - 1));
+}
+
+function skip(step) {
+  const i = siblings.list.indexOf(state["path"] ?? "");
+  const target = i >= 0 ? siblings.list[i + step] : null;
+  if (target) open_(target);
+}
+$("prev").onclick = () => skip(-1);
+$("next").onclick = () => skip(1);
+$("back").onclick = () => cmd("seek", -10);
+$("fwd").onclick = () => cmd("seek", 10);
+
+$("seek").oninput = () => {
+  seeking = true;
+  const v = +$("seek").value;
+  set($("pos"), "text", fmt(v));
+  fill($("seek"), v / (+$("seek").max || 100) * 100);
+};
+$("seek").onchange = () => { seeking = false; cmd("seek", +$("seek").value, "absolute"); };
+
+$("mute").onclick = () => cmd("cycle", "mute");
+
+const volSlider = detentSlider($("vol"), $("volout"), {
+  min: 0, max: 130, step: 2, value: 100,
+  detents: [{value: 100, label: "Full"}],
+  format: v => Math.round(v) + "%",
+  label: "Volume",
+  onCommit: v => cmd("set_property", "volume", v),
+});
+
+const speedSlider = detentSlider($("speed"), $("speedout"), {
+  min: 0.25, max: 3, step: 0.05, value: 1,
+  // Only 1× gets a name; labelling the rest just repeats the number.
+  detents: [0.5, 0.75, {value: 1, label: "Normal"}, 1.25, 1.5, 2],
+  // Detents sit 0.25 apart; a narrow pull keeps in-between speeds draggable
+  // on touch, where there is no arrow-key escape hatch.
+  pull: 0.06,
+  format: v => v.toFixed(2) + "×",
+  label: "Playback speed",
+  onCommit: v => cmd("set_property", "speed", v),
+});
+
+const trackVal = sel => isNaN(+sel.value) ? sel.value : +sel.value;
+$("atrack").onchange = e => cmd("set_property", "aid", trackVal(e.target));
+$("strack").onchange = e => cmd("set_property", "sid", trackVal(e.target));
+
+// ---------- open url ----------
+$("urlform").onsubmit = async e => {
+  e.preventDefault();
+  const target = $("urlinput").value.trim();
+  if (!target) return;
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  await open_(target);
+  btn.disabled = false;
+  $("urlinput").value = "";
+  $("urlinput").blur();
+};
+
+// ---------- file browser ----------
+const AUDIO = /\.(mp3|flac|opus|m4a|ogg|wav|aac|wma)$/i;
+// Captured once: these live inside tab panels that get unmounted.
+const crumbEl = $("crumb"), filesEl = $("files"), themesEl = $("themes");
+
+function row(icon, label, cls, onclick, i, path) {
+  const li = document.createElement("li");
+  if (cls) li.className = cls;
+  li.style.setProperty("--i", Math.min(i, 12));
+  if (path) { li.dataset.path = path; li.dataset.icon = icon; }
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "20"); svg.setAttribute("height", "20");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", icon);
+  svg.appendChild(use);
+  const span = document.createElement("span");
+  span.textContent = label;
+  li.append(svg, span);
+  li.onclick = onclick;
+  return li;
+}
+
+// mpv reports `path` as the exact string we sent from the row, so an equality
+// match is enough. URLs simply match nothing.
+let markedPath;
+function markPlaying(force) {
+  const playing = state["path"] ?? null;
+  if (!force && playing === markedPath) return;
+  markedPath = playing;
+  for (const li of filesEl.children) {
+    const on = !!li.dataset.path && li.dataset.path === playing;
+    li.classList.toggle("playing", on);
+    if (on) li.setAttribute("aria-current", "true");
+    else li.removeAttribute("aria-current");
+    const use = li.querySelector("use");
+    if (use && li.dataset.icon) use.setAttribute("href", on ? "#audio" : li.dataset.icon);
+  }
+}
+
+async function browse(path) {
+  const r = await fetch("/api/browse" + (path ? "?path=" + encodeURIComponent(path) : ""));
+  // A remembered folder may have been deleted or moved out of the root since
+  // last time; fall back to the root rather than showing an empty browser.
+  if (!r.ok) { if (path) browse(null); return; }
+  const data = await r.json();
+  crumbEl.textContent = data.path;
+  try { localStorage.setItem("mpvremote-dir", data.path); } catch (e) {}
+
+  const rows = [];
+  if (data.parent) rows.push(row("#up", "Up a level", "dir", () => browse(data.parent), 0));
+  data.entries.forEach((e, n) => {
+    const icon = e.is_dir ? "#folder" : (AUDIO.test(e.name) ? "#music" : "#film");
+    rows.push(row(icon, e.name, e.is_dir ? "dir" : "",
+                  e.is_dir ? () => browse(e.path) : () => open_(e.path),
+                  rows.length ? n + 1 : n,
+                  e.is_dir ? null : e.path));
+  });
+  if (!data.entries.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No media here";
+    rows.push(li);
+  }
+  filesEl.replaceChildren(...rows);
+  markPlaying(true); // fresh rows: re-apply regardless of the memo
+}
+
+// ---------- theme ----------
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("mpvremote-theme", t); } catch (e) {}
+  document.querySelector("meta[name=theme-color]").content =
+    getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  for (const b of themesEl.children) {
+    b.setAttribute("aria-pressed", String(b.dataset.t === t));
+  }
+  titleMarquee?.relayout();
+}
+themesEl.onclick = e => {
+  const b = e.target.closest("button[data-t]");
+  if (b) applyTheme(b.dataset.t);
+};
+// Created before the first applyTheme(), which re-measures it on font swap.
+const titleMarquee = marquee($("title"), {speed: 40, gap: 56});
+
+applyTheme(document.documentElement.dataset.theme || "cyberpunk");
+
+initTabs($("tablist"), $("tabpanels"));
+
+// ---------- server address ----------
+// location.host is the address this device actually reached the server on, so
+// it is right even behind a VPN or on a multi-homed box. Asking the server
+// would just make it guess at something the browser already knows.
+$("serveraddr").textContent = location.host;
+
+let startDir = null;
+try { startDir = localStorage.getItem("mpvremote-dir"); } catch (e) {}
+browse(startDir);
+connect(); // last: render() touches the sliders declared above
+</script>
+</body>
+</html>
