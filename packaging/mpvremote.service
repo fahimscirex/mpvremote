@@ -1,0 +1,16 @@
+[Unit]
+Description=mpv web remote
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mpvremote
+Restart=on-failure
+RestartSec=2
+# Uncomment to override defaults:
+# Environment=MPVREMOTE_PORT=8000
+# Environment=MPVREMOTE_ROOT=%h/Videos
+
+[Install]
+WantedBy=graphical-session.target

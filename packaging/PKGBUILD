@@ -1,0 +1,52 @@
+# Maintainer: Fahim Montasir <fahim.montasir@bdosn.org>
+
+pkgname=mpvremote-git
+_pkgname=mpvremote
+pkgver=r1.0000000
+pkgrel=1
+pkgdesc="Web remote control for mpv - single binary that serves its own UI"
+arch=('x86_64' 'aarch64')
+url="https://github.com/fahimscirex/mpvremote"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'mpv' 'iproute2')
+makedepends=('git' 'cargo')
+optdepends=('yt-dlp: play YouTube and other streaming URLs')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+	cd "$_pkgname"
+	printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+	cd "$_pkgname"
+	export RUSTUP_TOOLCHAIN=stable
+	cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+	cd "$_pkgname"
+	export RUSTUP_TOOLCHAIN=stable
+	export CARGO_TARGET_DIR=target
+	cargo build --frozen --release
+}
+
+check() {
+	cd "$_pkgname"
+	export RUSTUP_TOOLCHAIN=stable
+	export CARGO_TARGET_DIR=target
+	cargo test --frozen --release
+}
+
+package() {
+	cd "$_pkgname"
+	install -Dm755 "target/release/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+	# user unit, not system: it needs the desktop session to reach mpv
+	install -Dm644 packaging/mpvremote.service \
+		"$pkgdir/usr/lib/systemd/user/mpvremote.service"
+	install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$_pkgname/LICENSE"
+}
